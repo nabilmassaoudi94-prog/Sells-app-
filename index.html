@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>مدير المبيعات المغربي</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&display=swap');
+        body { font-family: 'Almarai', sans-serif; -webkit-tap-highlight-color: transparent; }
+        @media print { .no-print { display: none !important; } }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-gray-50">
+<div id="root"></div>
+<script type="text/babel">
+    const { Plus, Search, FileText, Trash2, Edit2, X, Package, Save, MessageSquare, Copy, Check } = lucide;
+
+    const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'N/A'];
+    const CURRENCY = 'درهم';
+    const PAYMENT_STATUSES = ['غير مدفوع', 'مدفوع جزئياً', 'مدفوع بالكامل'];
+    const DELIVERY_STATUSES = ['في الانتظار', 'قيد التجهيز', 'تم الشحن', 'تم التسليم', 'ملغي'];
+
+    const initialForm = {
+        customerName: '', phoneNumber: '',
+        articles: [{ name: '', size: 'M', qty: 1, unitPrice: 0 }],
+        amountPaid: 0, paymentStatus: 'غير مدفوع',
+        deliveryStatus: 'في الانتظار', notes: '',
+        date: new Date().toISOString().split('T')[0]
+    };
+
+    const statusColor = (s) => {
+        if (s === 'مدفوع بالكامل' || s === 'تم التسليم') return 'bg-green-100 text-green-700';
+        if (['مدفوع جزئياً','قيد التجهيز','تم الشحن'].includes(s)) return 'bg-yellow-100 text-yellow-700';
+        if (s === 'ملغي') return 'bg-red-100 text-red-700';
+        return 'bg-gray-100 text-gray-600';
+    };
+
+    const calcTotal = (articles) =>
+        articles.reduce((s, a) => s + (parseFloat(a.qty)||0) * (parseFloat(a.unitPrice)||0), 0);
+
+    function App() {
+        const [orders, setOrders] = React.useState(() => {
+            try { return JSON.parse(localStorage.getItem('sales_orders') || '[]'); } catch { return []; }
+        });
+        const [isFormOpen, setIsFormOpen] = React.useState(false);
+        const [editingId, setEditingId] = React.useState(null);
+        const [expandedId, setExpandedId] = React.useState(null);
+        const [formData, setFormData] = React.useState(initialForm);
+        const [searchTerm, setSearchTerm] = React.useState('');
+        const [filterStatus, setFilterStatus] = React.useState('الكل');
+        const [copiedId, setCopiedId] = React.useState(null);
+
+        const save = (newOrders) => {
+            setOrders(newOrders);
+            try { localStorage.setItem('sales_orders', JSON.stringify(newOrders)); } catch {}
+        };
+
+        const handleSubmit = (e) => {
+            e.preventDefault();
+            const total = calcTotal(formData.articles);
+            const remaining = total - (parseFloat(formData.amountPaid) || 0);
+            const record = { ...formData, totalValue: total, remainingBalance: Math.max(0, remaining) };
+            if (editingId) {
+                save(orders.map(o => o.id === editingId ? { ...record, id: editingId } : o));
+            } else {
+                save([{ ...record, id: Date.now().toString(), createdAt: new Date().toISOString() }, ...orders]);
+            }
+            setIsFormOpen(false);
+            setEditingId(null);
+            setFormData(initialForm);
+        };
+
+        const handleEdit = (order) => {
+            setFormData({ ...order });
+            setEditingId(order.id);
+            setExpandedId(null);
+            setIsFormOpen(true);
+        };
+
+        const handleDelete = (id) => {
+            if (window.confirm('هل أنت متأكد من حذف هذا الطلب؟')) {
+                save(orders.filter(o => o.id !== id));
+                if (expandedId === id) setExpandedId(null);
+            }
+        };
+
+        const handleShare = async (order) => {
+            const lines = order.articles.map(a => `  - ${a.name} (${a.size}) × ${a.qty} = ${a.qty * a.unitPrice} ${CURRENCY}`).join('\n');
+            const text = `*تأكيد طلبية - ${order.customerName}*\n\n*المنتجات:*\n${lines}\n\n*المجموع:* ${order.totalValue} ${CURRENCY}\n*المدفوع:* ${order.amountPaid} ${CURRENCY}\n*الباقي:* ${order.remainingBalance} ${CURRENCY}\n*حالة التسليم:* ${order.deliveryStatus}\n\nشكراً لتعاملكم معنا! 🙏`;
+            if (navigator.share) {
+                try { await navigator.share({ title: `طلبية ${order.customerName}`, text }); return; } catch {}
+            }
+            window.open(`https://wa.me/${order.phoneNumber.replace(/\D/g,'')}?text=${encodeURIComponent(text)}`, '_blank');
+        };
+
+        const handleCopy = (order) => {
+            const lines = order.articles.map(a => `- ${a.name} (${a.size}) × ${a.qty} = ${a.qty * a.unitPrice} ${CURRENCY}`).join('\n');
+            const text = `طلبية: ${order.customerName}\nالهاتف: ${order.phoneNumber}\n\n${lines}\n\nالمجموع: ${order.totalValue} ${CURRENCY}\nالمدفوع: ${order.amountPaid} ${CURRENCY}\nالباقي: ${order.remainingBalance} ${CURRENCY}`;
+            navigator.clipboard.writeText(text).then(() => {
+                setCopiedId(order.id);
+                setTimeout(() => setCopiedId(null), 2000);
+            });
+        };
+
+        const updateArticle = (i, field, val) => {
+            const arr = [...formData.articles];
+            arr[i][field] = (field === 'qty' || field === 'unitPrice') ? parseFloat(val)||0 : val;
+            setFormData({ ...formData, articles: arr });
+        };
+
+        const filtered = orders.filter(o => {
+            const ms = o.customerName.toLowerCase().includes(searchTerm.toLowerCase()) || o.phoneNumber.includes(searchTerm);
+            const mf = filterStatus === 'الكل' || o.paymentStatus === filterStatus || o.deliveryStatus === filterStatus;
+            return ms && mf;
+        });
+
+        const stats = {
+            count: orders.length,
+            total: orders.reduce((s,o) => s+(o.totalValue||0), 0),
+            paid: orders.reduce((s,o) => s+(parseFloat(o.amountPaid)||0), 0),
+            remaining: orders.reduce((s,o) => s+(o.remainingBalance||0), 0),
+        };
+
+        const liveTotal = calcTotal(formData.articles);
+        const liveRemaining = liveTotal - (parseFloat(formData.amountPaid)||0);
+
+        return (
+            <div className="min-h-screen bg-gray-50">
+                {/* HEADER */}
+                <header className="bg-white border-b sticky top-0 z-40 px-4 py-3 shadow-sm no-print">
+                    <div className="max-w-4xl mx-auto flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-blue-600 p-2 rounded-xl text-white"><Package size={20}/></div>
+                            <div>
+                                <h1 className="font-black text-base text-blue-900 leading-none">مدير المبيعات</h1>
+                                <p className="text-xs text-gray-400">{orders.length} طلبية محفوظة</p>
+                            </div>
+                        </div>
+                        <button onClick={() => { setFormData(initialForm); setEditingId(null); setIsFormOpen(true); }}
+                            className="bg-blue-600 text-white px-4 py-2.5 rounded-2xl text-sm font-black flex items-center gap-1 shadow">
+                            <Plus size={16}/> طلب جديد
+                        </button>
+                    </div>
+                </header>
+
+                <main className="max-w-4xl mx-auto p-4">
+                    {/* STATS */}
+                    {orders.length > 0 && (
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                            {[
+                                { label: 'الطلبات', value: stats.count, unit: '' },
+                                { label: 'القيمة الكلية', value: stats.total.toFixed(0), unit: CURRENCY },
+                                { label: 'المدفوع', value: stats.paid.toFixed(0), unit: CURRENCY },
+                                { label: 'الباقي', value: stats.remaining.toFixed(0), unit: CURRENCY },
+                            ].map((s,i) => (
+                                <div key={i} className="bg-white rounded-2xl p-4 shadow-sm text-center">
+                                    <div className="text-xs text-gray-400 mb-1">{s.label}</div>
+                                    <div className="font-black text-blue-900 text-lg">{s.value} <span className="text-xs font-normal text-gray-400">{s.unit}</span></div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* SEARCH + FILTER */}
+                    {orders.length > 0 && (
+                        <div className="flex gap-2 mb-4">
+                            <div className="flex-1 relative">
+                                <Search size={15} className="absolute top-1/2 -translate-y-1/2 right-3 text-gray-400"/>
+                                <input placeholder="بحث..." className="w-full pr-9 pl-3 py-3 bg-white rounded-2xl shadow-sm text-sm border-0"
+                                    value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/>
+                            </div>
+                            <select className="bg-white rounded-2xl shadow-sm px-3 text-sm border-0 font-bold"
+                                value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                                <option>الكل</option>
+                                {PAYMENT_STATUSES.map(s => <option key={s}>{s}</option>)}
+                                {DELIVERY_STATUSES.map(s => <option key={s}>{s}</option>)}
+                            </select>
+                        </div>
+                    )}
+
+                    {/* EMPTY STATE */}
+                    {filtered.length === 0 && (
+                        <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+                            <div className="bg-gray-100 p-8 rounded-full mb-4"><FileText size={48} className="text-gray-300"/></div>
+                            <p className="font-bold text-lg">{orders.length === 0 ? 'لا توجد طلبيات بعد' : 'لا توجد نتائج'}</p>
+                            <p className="text-sm mt-1">{orders.length === 0 ? 'اضغط على "طلب جديد" للبدء' : 'جرب بحثاً مختلفاً'}</p>
+                        </div>
+                    )}
+
+                    {/* ORDERS LIST */}
+                    <div className="space-y-3">
+                        {filtered.map(order => (
+                            <div key={order.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                                <div className="p-4 cursor-pointer" onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className="font-black text-gray-900 truncate mb-1">{order.customerName}</h3>
+                                            <p className="text-gray-400 text-xs mb-2" dir="ltr">📞 {order.phoneNumber}</p>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                <span className={`text-xs px-2 py-1 rounded-full font-bold ${statusColor(order.paymentStatus)}`}>{order.paymentStatus}</span>
+                                                <span className={`text-xs px-2 py-1 rounded-full font-bold ${statusColor(order.deliveryStatus)}`}>{order.deliveryStatus}</span>
+                                            </div>
+                                        </div>
+                                        <div className="text-left shrink-0">
+                                            <div className="font-black text-blue-900 text-xl">{order.totalValue} <span className="text-xs font-normal">{CURRENCY}</span></div>
+                                            {order.remainingBalance > 0 && <div className="text-xs text-red-500 font-bold">باقي: {order.remainingBalance} {CURRENCY}</div>}
+                                            <div className="text-xs text-gray-400 mt-1">{order.date}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {expandedId === order.id && (
+                                    <div className="border-t border-gray-100 p-4 bg-gray-50 space-y-3">
+                                        <div>
+                                            <h4 className="text-xs font-black text-gray-500 mb-2">المنتجات</h4>
+                                            {order.articles.map((a, i) => (
+                                                <div key={i} className="flex justify-between text-sm bg-white rounded-xl p-3 mb-1.5">
+                                                    <span className="font-bold">{a.name} <span className="text-gray-400 font-normal">({a.size})</span></span>
+                                                    <span className="text-gray-600">{a.qty} × {a.unitPrice} = <strong>{a.qty * a.unitPrice} {CURRENCY}</strong></span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {order.notes && (
+                                            <div className="bg-yellow-50 rounded-xl p-3 text-sm text-yellow-800">
+                                                <strong>ملاحظة:</strong> {order.notes}
+                                            </div>
+                                        )}
+                                        <div className="flex gap-2 flex-wrap pt-1">
+                                            <button onClick={() => handleShare(order)} className="flex-1 flex items-center justify-center gap-1.5 bg-green-500 text-white py-2.5 rounded-xl text-sm font-bold">
+                                                <MessageSquare size={15}/> واتساب
+                                            </button>
+                                            <button onClick={() => handleCopy(order)} className="flex items-center justify-center gap-1.5 bg-gray-200 text-gray-700 py-2.5 px-4 rounded-xl text-sm font-bold">
+                                                {copiedId === order.id ? <Check size={15}/> : <Copy size={15}/>}
+                                            </button>
+                                            <button onClick={() => handleEdit(order)} className="flex items-center justify-center gap-1.5 bg-blue-100 text-blue-700 py-2.5 px-4 rounded-xl text-sm font-bold">
+                                                <Edit2 size={15}/>
+                                            </button>
+                                            <button onClick={() => handleDelete(order.id)} className="flex items-center justify-center gap-1.5 bg-red-100 text-red-600 py-2.5 px-4 rounded-xl text-sm font-bold">
+                                                <Trash2 size={15}/>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </main>
+
+                {/* FORM SIDEBAR */}
+                {isFormOpen && (
+                    <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm"
+                        onClick={e => e.target === e.currentTarget && setIsFormOpen(false)}>
+                        <div className="w-full max-w-md bg-white h-full shadow-2xl flex flex-col overflow-y-auto">
+                            <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center z-10">
+                                <h2 className="text-xl font-black">{editingId ? 'تعديل الطلبية' : 'إضافة طلبية'}</h2>
+                                <button onClick={() => setIsFormOpen(false)} className="text-gray-400 hover:text-gray-700"><X size={26}/></button>
+                            </div>
+
+                            <form onSubmit={handleSubmit} className="p-6 space-y-5">
+                                {/* Customer */}
+                                <div>
+                                    <label className="text-xs font-black text-gray-500 mb-1 block">اسم الزبون *</label>
+                                    <input required placeholder="مثال: محمد العلوي" className="w-full p-4 bg-gray-50 rounded-2xl text-sm font-bold border-0"
+                                        value={formData.customerName} onChange={e => setFormData({...formData, customerName: e.target.value})}/>
+                                </div>
+                                <div>
+                                    <label className="text-xs font-black text-gray-500 mb-1 block">رقم الهاتف *</label>
+                                    <input required placeholder="0612345678" dir="ltr" className="w-full p-4 bg-gray-50 rounded-2xl text-sm font-bold border-0"
+                                        value={formData.phoneNumber} onChange={e => setFormData({...formData, phoneNumber: e.target.value})}/>
+                                </div>
+
+                                {/* Articles */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-xs font-black text-gray-500">المنتجات *</label>
+                                        <button type="button" onClick={() => setFormData({...formData, articles: [...formData.articles, {name:'',size:'M',qty:1,unitPrice:0}]})}
+                                            className="text-xs text-blue-600 font-bold flex items-center gap-1"><Plus size={13}/> إضافة</button>
+                                    </div>
+                                    {formData.articles.map((a, i) => (
+                                        <div key={i} className="bg-gray-50 rounded-2xl p-3 mb-2 space-y-2">
+                                            <div className="flex gap-2">
+                                                <input required placeholder="اسم المنتج" className="flex-1 p-3 bg-white rounded-xl text-sm font-bold border-0"
+                                                    value={a.name} onChange={e => updateArticle(i,'name',e.target.value)}/>
+                                                <select className="bg-white rounded-xl px-2 text-sm font-bold border-0"
+                                                    value={a.size} onChange={e => updateArticle(i,'size',e.target.value)}>
+                                                    {SIZES.map(s => <option key={s}>{s}</option>)}
+                                                </select>
+                                                {formData.articles.length > 1 && (
+                                                    <button type="button" onClick={() => setFormData({...formData, articles: formData.articles.filter((_,idx)=>idx!==i)})}
+                                                        className="text-red-400"><X size={16}/></button>
+                                                )}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <div className="flex-1">
+                                                    <label className="text-xs text-gray-400 block mb-1">الكمية</label>
+                                                    <input type="number" min="1" className="w-full p-3 bg-white rounded-xl text-sm font-bold border-0"
+                                                        value={a.qty} onChange={e => updateArticle(i,'qty',e.target.value)}/>
+                                                </div>
+                                                <div className="flex-1">
+                                                    <label className="text-xs text-gray-400 block mb-1">السعر ({CURRENCY})</label>
+                                                    <input type="number" min="0" className="w-full p-3 bg-white rounded-xl text-sm font-bold border-0"
+                                                        value={a.unitPrice} onChange={e => updateArticle(i,'unitPrice',e.target.value)}/>
+                                                </div>
+                                            </div>
+                                            <div className="text-xs text-left text-gray-500">= <strong>{(a.qty*a.unitPrice).toFixed(2)} {CURRENCY}</strong></div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Live Totals */}
+                                <div className="p-5 bg-blue-900 rounded-3xl text-white">
+                                    <div className="flex justify-between text-sm mb-2 opacity-80"><span>الإجمالي</span><strong>{liveTotal.toFixed(2)} {CURRENCY}</strong></div>
+                                    <div className="flex justify-between text-sm mb-3 opacity-80"><span>المدفوع</span><strong>{parseFloat(formData.amountPaid||0).toFixed(2)} {CURRENCY}</strong></div>
+                                    <div className="flex justify-between border-t border-white/20 pt-3">
+                                        <span className="font-bold">الباقي</span>
+                                        <span className="text-2xl font-black">{Math.max(0,liveRemaining).toFixed(2)} {CURRENCY}</span>
+                                    </div>
+                                </div>
+
+                                {/* Amount Paid */}
+                                <div>
+                                    <label className="text-xs font-black text-gray-500 mb-1 block">المبلغ المدفوع ({CURRENCY})</label>
+                                    <input type="number" min="0" className="w-full p-4 bg-gray-50 rounded-2xl text-sm font-bold border-0"
+                                        value={formData.amountPaid} onChange={e => setFormData({...formData, amountPaid: e.target.value})}/>
+                                </div>
+
+                                {/* Statuses */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="text-xs font-black text-gray-500 mb-1 block">حالة الدفع</label>
+                                        <select className="w-full p-3 bg-gray-50 rounded-2xl text-sm font-bold border-0"
+                                            value={formData.paymentStatus} onChange={e => setFormData({...formData, paymentStatus: e.target.value})}>
+                                            {PAYMENT_STATUSES.map(s => <option key={s}>{s}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-black text-gray-500 mb-1 block">حالة التسليم</label>
+                                        <select className="w-full p-3 bg-gray-50 rounded-2xl text-sm font-bold border-0"
+                                            value={formData.deliveryStatus} onChange={e => setFormData({...formData, deliveryStatus: e.target.value})}>
+                                            {DELIVERY_STATUSES.map(s => <option key={s}>{s}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Date */}
+                                <div>
+                                    <label className="text-xs font-black text-gray-500 mb-1 block">التاريخ</label>
+                                    <input type="date" className="w-full p-4 bg-gray-50 rounded-2xl text-sm font-bold border-0"
+                                        value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})}/>
+                                </div>
+
+                                {/* Notes */}
+                                <div>
+                                    <label className="text-xs font-black text-gray-500 mb-1 block">ملاحظات</label>
+                                    <textarea placeholder="أي تفاصيل إضافية..." className="w-full p-4 bg-gray-50 rounded-2xl text-sm font-bold border-0 resize-none h-24"
+                                        value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}/>
+                                </div>
+
+                                <button type="submit" className="w-full p-4 bg-blue-600 text-white rounded-2xl font-black text-base shadow-lg flex items-center justify-center gap-2">
+                                    <Save size={18}/> {editingId ? 'حفظ التعديلات' : 'حفظ الطلب'}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
